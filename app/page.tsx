@@ -17,7 +17,13 @@ import { CVPreview } from "@/components/cv/CVPreview";
 import { TemplateSelector } from "@/components/cv/TemplateSelector";
 import { TranslationPanel } from "@/components/cv/TranslationPanel";
 
-const formspreeEndpoint = "https://formspree.io/f/xjgzdoag";
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("read error"));
+    reader.readAsDataURL(file);
+  });
 
 const initialFormData: CandidateFormData = {
   fullName: "",
@@ -37,6 +43,7 @@ const initialFormData: CandidateFormData = {
 export default function CandidateForm() {
   const [formData, setFormData] = useState<CandidateFormData>(initialFormData);
   const [cvPhoto, setCvPhoto] = useState<File | null>(null);
+  const [cvPhotoDataUrl, setCvPhotoDataUrl] = useState<string | null>(null);
   const [submittedCandidate, setSubmittedCandidate] = useState<CandidateWorkspace | null>(null);
   const [currentView, setCurrentView] = useState<"form" | "workspace">("form");
   const [cvContent, setCvContent] = useState<CvContent | null>(null);
@@ -80,11 +87,12 @@ export default function CandidateForm() {
     });
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
 
     if (!file) {
       setCvPhoto(null);
+      setCvPhotoDataUrl(null);
       return;
     }
 
@@ -93,6 +101,7 @@ export default function CandidateForm() {
 
     if (file.size > maxSizeBytes) {
       setCvPhoto(null);
+      setCvPhotoDataUrl(null);
       setStatus({
         success: false,
         error: `Zdjęcie jest za duże. Maksymalny rozmiar pliku to ${maxSizeMb} MB.`,
@@ -103,6 +112,7 @@ export default function CandidateForm() {
 
     if (!file.type.startsWith("image/")) {
       setCvPhoto(null);
+      setCvPhotoDataUrl(null);
       setStatus({
         success: false,
         error: "Możesz dodać tylko plik graficzny, np. JPG, PNG lub WEBP.",
@@ -111,8 +121,16 @@ export default function CandidateForm() {
       return;
     }
 
-    setStatus({ success: false, error: null });
-    setCvPhoto(file);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setCvPhoto(file);
+      setCvPhotoDataUrl(dataUrl);
+      setStatus({ success: false, error: null });
+    } catch {
+      setCvPhoto(null);
+      setCvPhotoDataUrl(null);
+      setStatus({ success: false, error: "Nie udało się odczytać zdjęcia. Spróbuj ponownie." });
+    }
   };
 
   const createWorkspace = (candidateSnapshot: CandidateWorkspace) => {
@@ -139,7 +157,7 @@ export default function CandidateForm() {
     localStorage.setItem("candidates", JSON.stringify([dashboardCandidate, ...dashboardExisting]));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formData.cvConsent) {
@@ -161,42 +179,15 @@ export default function CandidateForm() {
         submittedAt,
         source: "Formularz Rekrutacyjny - Praca w Drukarni",
         cvPhotoName: cvPhoto?.name ?? "",
+        cvPhotoDataUrl: cvPhotoDataUrl ?? undefined,
       };
-      const payload = new FormData();
 
-      Object.entries(formData).forEach(([key, value]) => {
-        payload.append(key, String(value));
-      });
-
-      payload.append("submittedAt", submittedAt);
-      payload.append("source", "Formularz Rekrutacyjny - Praca w Drukarni");
-
-      if (cvPhoto) {
-        payload.append("cvPhoto", cvPhoto);
-      }
-
-      const response = await fetch(formspreeEndpoint, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-        },
-        body: payload,
-      });
-
-      if (response.ok) {
-        createWorkspace(candidateSnapshot);
-        setStatus({ success: true, error: null });
-      } else {
-        const data = await response.json();
-        setStatus({
-          success: false,
-          error: data.error || "Wystąpił błąd podczas wysyłania formularza.",
-        });
-      }
+      createWorkspace(candidateSnapshot);
+      setStatus({ success: true, error: null });
     } catch {
       setStatus({
         success: false,
-        error: "Błąd połączenia z serwerem. Spróbuj ponownie za chwilę.",
+        error: "Nie udało się zapisać danych lokalnie. Sprawdź pamięć przeglądarki.",
       });
     } finally {
       setLoading(false);
@@ -231,6 +222,7 @@ export default function CandidateForm() {
                   setCurrentView("form");
                   setFormData(initialFormData);
                   setCvPhoto(null);
+                  setCvPhotoDataUrl(null);
                   setStatus({ success: false, error: null });
                 }}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 hover:border-slate-500"
@@ -313,7 +305,7 @@ export default function CandidateForm() {
             Formularz Rekrutacyjny - Praca w Drukarni
           </h1>
           <p className="mt-2 text-sm text-slate-400">
-            Dane zostaną wysłane przez obecny Formspree, a po udanym wysłaniu powstanie lokalny workspace CV.
+            Dane są zapisywane lokalnie w przeglądarce — po wysłaniu od razu powstaje workspace CV z możliwością wyboru szablonu i wydruku.
           </p>
         </header>
 
@@ -394,7 +386,16 @@ export default function CandidateForm() {
             <span className="mt-1 block text-xs text-slate-500">
               Zdjęcie nie jest wymagane. Maksymalny rozmiar: 5 MB.
             </span>
-            {cvPhoto && <span className="mt-1 block text-xs text-emerald-300">Wybrane zdjęcie: {cvPhoto.name}</span>}
+            {cvPhotoDataUrl && cvPhoto ? (
+              <span className="mt-2 flex items-center gap-3">
+                <img
+                  src={cvPhotoDataUrl}
+                  alt="Podgląd zdjęcia"
+                  className="h-14 w-14 rounded-md object-cover border border-slate-700"
+                />
+                <span className="text-xs text-emerald-300 break-all">{cvPhoto.name}</span>
+              </span>
+            ) : null}
           </label>
 
           <label className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
@@ -415,7 +416,7 @@ export default function CandidateForm() {
             className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-500 py-3 font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-300"
           >
             {loading ? <FileText size={18} /> : <Send size={18} />}
-            {loading ? "Wysyłanie..." : "Wyślij dane i utwórz workspace CV"}
+            {loading ? "Zapisywanie..." : "Zapisz dane i utwórz workspace CV"}
           </button>
         </form>
       </section>

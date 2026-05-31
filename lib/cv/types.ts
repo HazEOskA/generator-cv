@@ -23,6 +23,7 @@ export type CandidateWorkspace = CandidateFormData & {
   submittedAt: string;
   source: string;
   cvPhotoName?: string;
+  cvPhotoDataUrl?: string;
 };
 
 export type CvContent = {
