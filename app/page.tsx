@@ -25,6 +25,32 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
+const downscaleDataUrl = (dataUrl: string, maxDim = 480, quality = 0.82): Promise<string> =>
+  new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
 const initialFormData: CandidateFormData = {
   fullName: "",
   phone: "",
@@ -123,8 +149,9 @@ export default function CandidateForm() {
 
     try {
       const dataUrl = await readFileAsDataUrl(file);
+      const small = await downscaleDataUrl(dataUrl, 480, 0.82);
       setCvPhoto(file);
-      setCvPhotoDataUrl(dataUrl);
+      setCvPhotoDataUrl(small);
       setStatus({ success: false, error: null });
     } catch {
       setCvPhoto(null);
@@ -140,21 +167,54 @@ export default function CandidateForm() {
     setCvContent(content);
     setCurrentView("workspace");
 
-    const existing = JSON.parse(localStorage.getItem("workpeopleCandidates") || "[]") as CandidateWorkspace[];
-    localStorage.setItem("workpeopleCandidates", JSON.stringify([candidateSnapshot, ...existing]));
+    safeSaveWorkpeople(candidateSnapshot);
+    safeSaveDashboard(candidateSnapshot);
+  };
 
+  const safeSaveWorkpeople = (snapshot: CandidateWorkspace) => {
+    const persist = (payload: CandidateWorkspace) => {
+      let existing: CandidateWorkspace[] = [];
+      try {
+        existing = JSON.parse(localStorage.getItem("workpeopleCandidates") || "[]");
+      } catch {
+        existing = [];
+      }
+      localStorage.setItem("workpeopleCandidates", JSON.stringify([payload, ...existing]));
+    };
+    try {
+      persist(snapshot);
+    } catch {
+      try {
+        const slim = { ...snapshot, cvPhotoDataUrl: undefined };
+        persist(slim);
+      } catch {
+        /* localStorage full — workspace still works for current session */
+      }
+    }
+  };
+
+  const safeSaveDashboard = (snapshot: CandidateWorkspace) => {
     const dashboardCandidate = {
       id: Date.now(),
-      fullName: candidateSnapshot.fullName,
-      phone: candidateSnapshot.phone,
-      birthDate: candidateSnapshot.birthDate,
-      education: candidateSnapshot.education,
-      experience: candidateSnapshot.experience,
-      printingExp: candidateSnapshot.printingExp,
-      date: new Date(candidateSnapshot.submittedAt).toLocaleDateString("pl-PL"),
+      fullName: snapshot.fullName,
+      phone: snapshot.phone,
+      birthDate: snapshot.birthDate,
+      education: snapshot.education,
+      experience: snapshot.experience,
+      printingExp: snapshot.printingExp,
+      date: new Date(snapshot.submittedAt).toLocaleDateString("pl-PL"),
     };
-    const dashboardExisting = JSON.parse(localStorage.getItem("candidates") || "[]");
-    localStorage.setItem("candidates", JSON.stringify([dashboardCandidate, ...dashboardExisting]));
+    try {
+      let existing: unknown[] = [];
+      try {
+        existing = JSON.parse(localStorage.getItem("candidates") || "[]");
+      } catch {
+        existing = [];
+      }
+      localStorage.setItem("candidates", JSON.stringify([dashboardCandidate, ...existing]));
+    } catch {
+      /* ignore */
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
