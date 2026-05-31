@@ -1,21 +1,23 @@
-﻿"use client";
+"use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { ArrowLeft, Clipboard, FileText, Printer, Send } from "lucide-react";
+import { buildCandidateMarkdown } from "@/lib/cv/buildCandidateMarkdown";
+import { buildCvContent } from "@/lib/cv/buildCvContent";
+import { scoreCandidate } from "@/lib/cv/scoreCandidate";
+import type {
+  CandidateFormData,
+  CandidateWorkspace,
+  CvContent,
+  CvTemplateId,
+} from "@/lib/cv/types";
+import { CandidateScoreCard } from "@/components/cv/CandidateScoreCard";
+import { CVEditor } from "@/components/cv/CVEditor";
+import { CVPreview } from "@/components/cv/CVPreview";
+import { TemplateSelector } from "@/components/cv/TemplateSelector";
+import { TranslationPanel } from "@/components/cv/TranslationPanel";
 
-type CandidateFormData = {
-  fullName: string;
-  phone: string;
-  email: string;
-  birthDate: string;
-  currentLocation: string;
-  availability: string;
-  education: string;
-  experience: string;
-  printingExp: string;
-  languages: string;
-  drivingLicense: string;
-  cvConsent: boolean;
-};
+const formspreeEndpoint = "https://formspree.io/f/xjgzdoag";
 
 const initialFormData: CandidateFormData = {
   fullName: "",
@@ -35,13 +37,28 @@ const initialFormData: CandidateFormData = {
 export default function CandidateForm() {
   const [formData, setFormData] = useState<CandidateFormData>(initialFormData);
   const [cvPhoto, setCvPhoto] = useState<File | null>(null);
-
+  const [workspaceCandidate, setWorkspaceCandidate] = useState<CandidateWorkspace | null>(null);
+  const [cvContent, setCvContent] = useState<CvContent | null>(null);
+  const [template, setTemplate] = useState<CvTemplateId>("production");
+  const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState<{ success: boolean; error: string | null }>({
     success: false,
     error: null,
   });
-
   const [loading, setLoading] = useState(false);
+
+  const score = useMemo(
+    () => (workspaceCandidate ? scoreCandidate(workspaceCandidate) : null),
+    [workspaceCandidate]
+  );
+
+  const markdown = useMemo(
+    () =>
+      workspaceCandidate && cvContent
+        ? buildCandidateMarkdown(workspaceCandidate, cvContent)
+        : "",
+    [workspaceCandidate, cvContent]
+  );
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -97,6 +114,36 @@ export default function CandidateForm() {
     setCvPhoto(file);
   };
 
+  const createWorkspace = (submittedAt: string) => {
+    const candidate: CandidateWorkspace = {
+      ...formData,
+      id: crypto.randomUUID(),
+      submittedAt,
+      source: "Formularz Rekrutacyjny - Praca w Drukarni",
+      cvPhotoName: cvPhoto?.name,
+    };
+    const content = buildCvContent(candidate);
+
+    setWorkspaceCandidate(candidate);
+    setCvContent(content);
+
+    const existing = JSON.parse(localStorage.getItem("workpeopleCandidates") || "[]") as CandidateWorkspace[];
+    localStorage.setItem("workpeopleCandidates", JSON.stringify([candidate, ...existing]));
+
+    const dashboardCandidate = {
+      id: Date.now(),
+      fullName: candidate.fullName,
+      phone: candidate.phone,
+      birthDate: candidate.birthDate,
+      education: candidate.education,
+      experience: candidate.experience,
+      printingExp: candidate.printingExp,
+      date: new Date(submittedAt).toLocaleDateString("pl-PL"),
+    };
+    const dashboardExisting = JSON.parse(localStorage.getItem("candidates") || "[]");
+    localStorage.setItem("candidates", JSON.stringify([dashboardCandidate, ...dashboardExisting]));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -112,20 +159,21 @@ export default function CandidateForm() {
     setStatus({ success: false, error: null });
 
     try {
+      const submittedAt = new Date().toISOString();
       const payload = new FormData();
 
       Object.entries(formData).forEach(([key, value]) => {
         payload.append(key, String(value));
       });
 
-      payload.append("submittedAt", new Date().toISOString());
+      payload.append("submittedAt", submittedAt);
       payload.append("source", "Formularz Rekrutacyjny - Praca w Drukarni");
 
       if (cvPhoto) {
         payload.append("cvPhoto", cvPhoto);
       }
 
-      const response = await fetch("https://formspree.io/f/xjgzdoag", {
+      const response = await fetch(formspreeEndpoint, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -134,6 +182,7 @@ export default function CandidateForm() {
       });
 
       if (response.ok) {
+        createWorkspace(submittedAt);
         setStatus({ success: true, error: null });
         setFormData(initialFormData);
         setCvPhoto(null);
@@ -154,181 +203,155 @@ export default function CandidateForm() {
     }
   };
 
-  if (status.success) {
+  const copyMarkdown = async () => {
+    await navigator.clipboard.writeText(markdown);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  if (workspaceCandidate && cvContent && score) {
     return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-full max-w-md bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-xl space-y-4">
-          <div className="text-emerald-400 text-5xl">✓</div>
-          <h1 className="text-2xl font-bold">Dane zostały przesłane!</h1>
-          <p className="text-slate-400">
-            Dziękujemy. Twoja aplikacja została zarejestrowana. Skontaktujemy się z Tobą telefonicznie.
-          </p>
+      <main className="min-h-screen bg-slate-950 text-slate-100 print:bg-white">
+        <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur print:hidden">
+          <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
+                WorkPeople CV Copilot MVP
+              </p>
+              <h1 className="text-xl font-semibold text-white">{workspaceCandidate.fullName}</h1>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setWorkspaceCandidate(null);
+                  setCvContent(null);
+                  setStatus({ success: false, error: null });
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 hover:border-slate-500"
+              >
+                <ArrowLeft size={16} /> Wróć do formularza
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+              >
+                <Printer size={16} /> Drukuj / zapisz PDF
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <div className="mx-auto grid max-w-7xl gap-5 px-4 py-5 lg:grid-cols-[0.9fr_1.1fr] print:block print:p-0">
+          <div className="space-y-5 print:hidden">
+            <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
+              <h2 className="text-lg font-semibold text-white">Dane kandydata</h2>
+              <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-slate-500">Telefon</dt>
+                  <dd className="font-medium text-slate-100">{workspaceCandidate.phone}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">E-mail</dt>
+                  <dd className="font-medium text-slate-100">{workspaceCandidate.email}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Lokalizacja</dt>
+                  <dd className="font-medium text-slate-100">{workspaceCandidate.currentLocation}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Dostępność</dt>
+                  <dd className="font-medium text-slate-100">{workspaceCandidate.availability}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <CandidateScoreCard score={score} />
+            <TemplateSelector value={template} onChange={setTemplate} />
+            <CVEditor content={cvContent} onChange={setCvContent} />
+            <TranslationPanel content={cvContent} />
+
+            <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-white">Markdown dla AI</h2>
+                <button
+                  type="button"
+                  onClick={copyMarkdown}
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-500 px-3 py-2 text-sm font-medium text-slate-950 hover:bg-cyan-400"
+                >
+                  <Clipboard size={16} /> {copied ? "Skopiowano" : "Kopiuj"}
+                </button>
+              </div>
+              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-300">
+                {markdown}
+              </pre>
+            </section>
+          </div>
+
+          <div className="print:block">
+            <CVPreview candidate={workspaceCandidate} content={cvContent} template={template} />
+          </div>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-900 text-slate-100 p-4 flex flex-col items-center justify-center">
-      <section className="w-full max-w-2xl bg-slate-800 rounded-2xl border border-slate-700 p-6 md:p-8 shadow-2xl space-y-6">
+    <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100 sm:py-10">
+      <section className="mx-auto w-full max-w-2xl rounded-lg border border-slate-700 bg-slate-900 p-5 shadow-2xl shadow-slate-950/40 md:p-8">
         <header>
-          <p className="text-xs uppercase tracking-[0.25em] text-blue-400 font-semibold">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">
             Rekrutacja / Intake CV
           </p>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white mt-2">
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white md:text-3xl">
             Formularz Rekrutacyjny - Praca w Drukarni
           </h1>
-          <p className="text-sm text-slate-400 mt-2">
-            Wypełnij dane dokładnie. Na podstawie formularza przygotujemy Twoje zgłoszenie oraz CV dla pracodawcy.
+          <p className="mt-2 text-sm text-slate-400">
+            Dane zostaną wysłane przez obecny Formspree, a po udanym wysłaniu powstanie lokalny workspace CV.
           </p>
         </header>
 
         {status.error && (
-          <div className="bg-red-500/10 border border-red-500 text-red-300 p-3 rounded-lg text-sm">
+          <div className="mt-5 rounded-lg border border-red-500 bg-red-500/10 p-3 text-sm text-red-200">
             {status.error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="space-y-2">
-            <label htmlFor="fullName" className="text-sm font-medium text-slate-300">
-              Imię i nazwisko
-            </label>
-            <input
-              required
-              id="fullName"
-              type="text"
-              name="fullName"
-              placeholder="np. Grzegorz Pawłowski"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-              value={formData.fullName}
-              onChange={handleChange}
-            />
+        <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+          <FormInput label="Imię i nazwisko" name="fullName" value={formData.fullName} onChange={handleChange} required placeholder="np. Grzegorz Pawłowski" />
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormInput label="Numer telefonu" name="phone" type="tel" value={formData.phone} onChange={handleChange} required placeholder="np. +48 790 267 752" />
+            <FormInput label="Adres e-mail" name="email" type="email" value={formData.email} onChange={handleChange} required placeholder="np. kandydat@email.com" />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label htmlFor="phone" className="text-sm font-medium text-slate-300">
-                Numer telefonu
-              </label>
-              <input
-                required
-                id="phone"
-                type="tel"
-                name="phone"
-                placeholder="np. +48 790 267 752"
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-                value={formData.phone}
-                onChange={handleChange}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium text-slate-300">
-                Adres e-mail
-              </label>
-              <input
-                required
-                id="email"
-                type="email"
-                name="email"
-                placeholder="np. kandydat@email.com"
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-                value={formData.email}
-                onChange={handleChange}
-              />
-            </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <FormInput label="Data urodzenia" name="birthDate" type="date" value={formData.birthDate} onChange={handleChange} required />
+            <FormInput label="Miejscowość / kraj pobytu" name="currentLocation" value={formData.currentLocation} onChange={handleChange} required placeholder="np. Rotterdam, Holandia" />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label htmlFor="birthDate" className="text-sm font-medium text-slate-300">
-                Data urodzenia
-              </label>
-              <input
-                required
-                id="birthDate"
-                type="date"
-                name="birthDate"
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-                value={formData.birthDate}
-                onChange={handleChange}
-              />
-            </div>
+          <FormInput label="Dostępność od kiedy" name="availability" value={formData.availability} onChange={handleChange} required placeholder="np. od zaraz, od 15 czerwca" />
+          <FormInput label="Wykształcenie" name="education" value={formData.education} onChange={handleChange} required placeholder="np. zawodowe, średnie, techniczne" />
 
-            <div className="space-y-2">
-              <label htmlFor="currentLocation" className="text-sm font-medium text-slate-300">
-                Miejscowość / kraj pobytu
-              </label>
-              <input
-                required
-                id="currentLocation"
-                type="text"
-                name="currentLocation"
-                placeholder="np. Rotterdam, Holandia"
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-                value={formData.currentLocation}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="availability" className="text-sm font-medium text-slate-300">
-              Dostępność od kiedy
-            </label>
-            <input
-              required
-              id="availability"
-              type="text"
-              name="availability"
-              placeholder="np. od zaraz, od przyszłego tygodnia, od 15 czerwca"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-              value={formData.availability}
-              onChange={handleChange}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="education" className="text-sm font-medium text-slate-300">
-              Wykształcenie
-            </label>
-            <input
-              required
-              id="education"
-              type="text"
-              name="education"
-              placeholder="np. zawodowe, średnie, techniczne, wyższe"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-              value={formData.education}
-              onChange={handleChange}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="experience" className="text-sm font-medium text-slate-300">
-              Doświadczenie zawodowe
-            </label>
+          <label className="block text-sm font-medium text-slate-300">
+            Doświadczenie zawodowe
             <textarea
               required
-              id="experience"
               rows={5}
               name="experience"
-              placeholder="Podaj nazwę firmy, stanowisko, okres pracy i główne obowiązki. Jeśli nie masz doświadczenia, wpisz: brak doświadczenia zawodowego."
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 resize-none"
+              placeholder="Podaj firmę, stanowisko, okres pracy i główne obowiązki."
+              className="mt-2 w-full resize-none rounded-lg border border-slate-700 bg-slate-950 px-4 py-2.5 text-white outline-none focus:border-cyan-400"
               value={formData.experience}
               onChange={handleChange}
             />
-          </div>
+          </label>
 
-          <div className="space-y-2">
-            <label htmlFor="printingExp" className="text-sm font-medium text-slate-300">
-              Czy masz doświadczenie w pracy w drukarni / na produkcji?
-            </label>
+          <label className="block text-sm font-medium text-slate-300">
+            Czy masz doświadczenie w pracy w drukarni / na produkcji?
             <select
-              id="printingExp"
               name="printingExp"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-2.5 text-white outline-none focus:border-cyan-400"
               value={formData.printingExp}
               onChange={handleChange}
             >
@@ -336,32 +359,15 @@ export default function CandidateForm() {
               <option value="tak">Tak, pracowałem już w drukarni</option>
               <option value="produkcja">Pracowałem na innej produkcji / magazynie</option>
             </select>
-          </div>
+          </label>
 
-          <div className="space-y-2">
-            <label htmlFor="languages" className="text-sm font-medium text-slate-300">
-              Języki
-            </label>
-            <input
-              required
-              id="languages"
-              type="text"
-              name="languages"
-              placeholder="np. polski ojczysty, angielski podstawowy, niderlandzki brak"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
-              value={formData.languages}
-              onChange={handleChange}
-            />
-          </div>
+          <FormInput label="Języki" name="languages" value={formData.languages} onChange={handleChange} required placeholder="np. polski ojczysty, angielski podstawowy" />
 
-          <div className="space-y-2">
-            <label htmlFor="drivingLicense" className="text-sm font-medium text-slate-300">
-              Prawo jazdy
-            </label>
+          <label className="block text-sm font-medium text-slate-300">
+            Prawo jazdy
             <select
-              id="drivingLicense"
               name="drivingLicense"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-blue-500"
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-2.5 text-white outline-none focus:border-cyan-400"
               value={formData.drivingLicense}
               onChange={handleChange}
             >
@@ -369,29 +375,22 @@ export default function CandidateForm() {
               <option value="kat-b">Kat. B</option>
               <option value="inne">Inne</option>
             </select>
-          </div>
+          </label>
 
-          <div className="space-y-2">
-            <label htmlFor="cvPhoto" className="text-sm font-medium text-slate-300">
-              Zdjęcie do CV (opcjonalnie)
-            </label>
+          <label className="block text-sm font-medium text-slate-300">
+            Zdjęcie do CV (opcjonalnie)
             <input
-              id="cvPhoto"
               type="file"
               name="cvPhoto"
               accept="image/*"
               onChange={handlePhotoChange}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white file:mr-4 file:rounded-md file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-700 focus:outline-none focus:border-blue-500"
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-2.5 text-white file:mr-4 file:rounded-md file:border-0 file:bg-cyan-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-cyan-500"
             />
-            <p className="text-xs text-slate-500">
-              Możesz dodać aktualne zdjęcie twarzy do CV. Zdjęcie nie jest wymagane. Maksymalny rozmiar: 5 MB.
-            </p>
-            {cvPhoto && (
-              <p className="text-xs text-emerald-400">
-                Wybrane zdjęcie: {cvPhoto.name}
-              </p>
-            )}
-          </div>
+            <span className="mt-1 block text-xs text-slate-500">
+              Zdjęcie nie jest wymagane. Maksymalny rozmiar: 5 MB.
+            </span>
+            {cvPhoto && <span className="mt-1 block text-xs text-emerald-300">Wybrane zdjęcie: {cvPhoto.name}</span>}
+          </label>
 
           <label className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
             <input
@@ -400,22 +399,56 @@ export default function CandidateForm() {
               name="cvConsent"
               checked={formData.cvConsent}
               onChange={handleChange}
-              className="mt-1 h-4 w-4 accent-blue-600"
+              className="mt-1 h-4 w-4 accent-cyan-500"
             />
-            <span>
-              Wyrażam zgodę na przetwarzanie moich danych osobowych w celu prowadzenia rekrutacji.
-            </span>
+            <span>Wyrażam zgodę na przetwarzanie moich danych osobowych w celu prowadzenia rekrutacji.</span>
           </label>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white font-medium py-3 rounded-lg transition shadow-lg shadow-blue-600/20"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-500 py-3 font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-300"
           >
-            {loading ? "Wysyłanie..." : "Wyślij moje dane"}
+            {loading ? <FileText size={18} /> : <Send size={18} />}
+            {loading ? "Wysyłanie..." : "Wyślij dane i utwórz workspace CV"}
           </button>
         </form>
       </section>
     </main>
+  );
+}
+
+type FormInputProps = {
+  label: string;
+  name: keyof CandidateFormData;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  type?: string;
+  required?: boolean;
+  placeholder?: string;
+};
+
+function FormInput({
+  label,
+  name,
+  value,
+  onChange,
+  type = "text",
+  required,
+  placeholder,
+}: FormInputProps) {
+  return (
+    <label className="block text-sm font-medium text-slate-300">
+      {label}
+      <input
+        required={required}
+        type={type}
+        name={name}
+        placeholder={placeholder}
+        className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-2.5 text-white outline-none focus:border-cyan-400"
+        value={value}
+        onChange={onChange}
+      />
+    </label>
   );
 }
