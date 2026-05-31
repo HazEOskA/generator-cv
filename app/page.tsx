@@ -2,23 +2,39 @@
 
 import { useState } from "react";
 
-export default function CandidateForm() {
-  const initialFormData = {
-    fullName: "",
-    phone: "",
-    email: "",
-    birthDate: "",
-    currentLocation: "",
-    availability: "",
-    education: "",
-    experience: "",
-    printingExp: "nie",
-    languages: "",
-    drivingLicense: "brak",
-    cvConsent: false,
-  };
+type CandidateFormData = {
+  fullName: string;
+  phone: string;
+  email: string;
+  birthDate: string;
+  currentLocation: string;
+  availability: string;
+  education: string;
+  experience: string;
+  printingExp: string;
+  languages: string;
+  drivingLicense: string;
+  cvConsent: boolean;
+};
 
-  const [formData, setFormData] = useState(initialFormData);
+const initialFormData: CandidateFormData = {
+  fullName: "",
+  phone: "",
+  email: "",
+  birthDate: "",
+  currentLocation: "",
+  availability: "",
+  education: "",
+  experience: "",
+  printingExp: "nie",
+  languages: "",
+  drivingLicense: "brak",
+  cvConsent: false,
+};
+
+export default function CandidateForm() {
+  const [formData, setFormData] = useState<CandidateFormData>(initialFormData);
+  const [cvPhoto, setCvPhoto] = useState<File | null>(null);
 
   const [status, setStatus] = useState<{ success: boolean; error: string | null }>({
     success: false,
@@ -46,6 +62,41 @@ export default function CandidateForm() {
     });
   };
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+
+    if (!file) {
+      setCvPhoto(null);
+      return;
+    }
+
+    const maxSizeMb = 5;
+    const maxSizeBytes = maxSizeMb * 1024 * 1024;
+
+    if (file.size > maxSizeBytes) {
+      setCvPhoto(null);
+      setStatus({
+        success: false,
+        error: `Zdjęcie jest za duże. Maksymalny rozmiar pliku to ${maxSizeMb} MB.`,
+      });
+      e.target.value = "";
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setCvPhoto(null);
+      setStatus({
+        success: false,
+        error: "Możesz dodać tylko plik graficzny, np. JPG, PNG lub WEBP.",
+      });
+      e.target.value = "";
+      return;
+    }
+
+    setStatus({ success: false, error: null });
+    setCvPhoto(file);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -61,22 +112,31 @@ export default function CandidateForm() {
     setStatus({ success: false, error: null });
 
     try {
+      const payload = new FormData();
+
+      Object.entries(formData).forEach(([key, value]) => {
+        payload.append(key, String(value));
+      });
+
+      payload.append("submittedAt", new Date().toISOString());
+      payload.append("source", "Formularz Rekrutacyjny - Praca w Drukarni");
+
+      if (cvPhoto) {
+        payload.append("cvPhoto", cvPhoto);
+      }
+
       const response = await fetch("https://formspree.io/f/xjgzdoag", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({
-          ...formData,
-          submittedAt: new Date().toISOString(),
-          source: "Formularz Rekrutacyjny - Praca w Drukarni",
-        }),
+        body: payload,
       });
 
       if (response.ok) {
         setStatus({ success: true, error: null });
         setFormData(initialFormData);
+        setCvPhoto(null);
       } else {
         const data = await response.json();
         setStatus({
@@ -309,6 +369,28 @@ export default function CandidateForm() {
               <option value="kat-b">Kat. B</option>
               <option value="inne">Inne</option>
             </select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="cvPhoto" className="text-sm font-medium text-slate-300">
+              Zdjęcie do CV (opcjonalnie)
+            </label>
+            <input
+              id="cvPhoto"
+              type="file"
+              name="cvPhoto"
+              accept="image/*"
+              onChange={handlePhotoChange}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-white file:mr-4 file:rounded-md file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-700 focus:outline-none focus:border-blue-500"
+            />
+            <p className="text-xs text-slate-500">
+              Możesz dodać aktualne zdjęcie twarzy do CV. Zdjęcie nie jest wymagane. Maksymalny rozmiar: 5 MB.
+            </p>
+            {cvPhoto && (
+              <p className="text-xs text-emerald-400">
+                Wybrane zdjęcie: {cvPhoto.name}
+              </p>
+            )}
           </div>
 
           <label className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
