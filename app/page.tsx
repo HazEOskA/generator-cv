@@ -37,7 +37,8 @@ const initialFormData: CandidateFormData = {
 export default function CandidateForm() {
   const [formData, setFormData] = useState<CandidateFormData>(initialFormData);
   const [cvPhoto, setCvPhoto] = useState<File | null>(null);
-  const [workspaceCandidate, setWorkspaceCandidate] = useState<CandidateWorkspace | null>(null);
+  const [submittedCandidate, setSubmittedCandidate] = useState<CandidateWorkspace | null>(null);
+  const [currentView, setCurrentView] = useState<"form" | "workspace">("form");
   const [cvContent, setCvContent] = useState<CvContent | null>(null);
   const [template, setTemplate] = useState<CvTemplateId>("production");
   const [copied, setCopied] = useState(false);
@@ -48,16 +49,16 @@ export default function CandidateForm() {
   const [loading, setLoading] = useState(false);
 
   const score = useMemo(
-    () => (workspaceCandidate ? scoreCandidate(workspaceCandidate) : null),
-    [workspaceCandidate]
+    () => (submittedCandidate ? scoreCandidate(submittedCandidate) : null),
+    [submittedCandidate]
   );
 
   const markdown = useMemo(
     () =>
-      workspaceCandidate && cvContent
-        ? buildCandidateMarkdown(workspaceCandidate, cvContent)
+      submittedCandidate && cvContent
+        ? buildCandidateMarkdown(submittedCandidate, cvContent)
         : "",
-    [workspaceCandidate, cvContent]
+    [submittedCandidate, cvContent]
   );
 
   const handleChange = (
@@ -114,31 +115,25 @@ export default function CandidateForm() {
     setCvPhoto(file);
   };
 
-  const createWorkspace = (submittedAt: string) => {
-    const candidate: CandidateWorkspace = {
-      ...formData,
-      id: crypto.randomUUID(),
-      submittedAt,
-      source: "Formularz Rekrutacyjny - Praca w Drukarni",
-      cvPhotoName: cvPhoto?.name,
-    };
-    const content = buildCvContent(candidate);
+  const createWorkspace = (candidateSnapshot: CandidateWorkspace) => {
+    const content = buildCvContent(candidateSnapshot);
 
-    setWorkspaceCandidate(candidate);
+    setSubmittedCandidate(candidateSnapshot);
     setCvContent(content);
+    setCurrentView("workspace");
 
     const existing = JSON.parse(localStorage.getItem("workpeopleCandidates") || "[]") as CandidateWorkspace[];
-    localStorage.setItem("workpeopleCandidates", JSON.stringify([candidate, ...existing]));
+    localStorage.setItem("workpeopleCandidates", JSON.stringify([candidateSnapshot, ...existing]));
 
     const dashboardCandidate = {
       id: Date.now(),
-      fullName: candidate.fullName,
-      phone: candidate.phone,
-      birthDate: candidate.birthDate,
-      education: candidate.education,
-      experience: candidate.experience,
-      printingExp: candidate.printingExp,
-      date: new Date(submittedAt).toLocaleDateString("pl-PL"),
+      fullName: candidateSnapshot.fullName,
+      phone: candidateSnapshot.phone,
+      birthDate: candidateSnapshot.birthDate,
+      education: candidateSnapshot.education,
+      experience: candidateSnapshot.experience,
+      printingExp: candidateSnapshot.printingExp,
+      date: new Date(candidateSnapshot.submittedAt).toLocaleDateString("pl-PL"),
     };
     const dashboardExisting = JSON.parse(localStorage.getItem("candidates") || "[]");
     localStorage.setItem("candidates", JSON.stringify([dashboardCandidate, ...dashboardExisting]));
@@ -160,6 +155,13 @@ export default function CandidateForm() {
 
     try {
       const submittedAt = new Date().toISOString();
+      const candidateSnapshot: CandidateWorkspace = {
+        ...formData,
+        id: crypto.randomUUID(),
+        submittedAt,
+        source: "Formularz Rekrutacyjny - Praca w Drukarni",
+        cvPhotoName: cvPhoto?.name ?? "",
+      };
       const payload = new FormData();
 
       Object.entries(formData).forEach(([key, value]) => {
@@ -182,10 +184,8 @@ export default function CandidateForm() {
       });
 
       if (response.ok) {
-        createWorkspace(submittedAt);
+        createWorkspace(candidateSnapshot);
         setStatus({ success: true, error: null });
-        setFormData(initialFormData);
-        setCvPhoto(null);
       } else {
         const data = await response.json();
         setStatus({
@@ -209,7 +209,7 @@ export default function CandidateForm() {
     window.setTimeout(() => setCopied(false), 1600);
   };
 
-  if (workspaceCandidate && cvContent && score) {
+  if (currentView === "workspace" && submittedCandidate && cvContent && score) {
     return (
       <main className="min-h-screen bg-slate-950 text-slate-100 print:bg-white">
         <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur print:hidden">
@@ -218,14 +218,19 @@ export default function CandidateForm() {
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
                 WorkPeople CV Copilot MVP
               </p>
-              <h1 className="text-xl font-semibold text-white">{workspaceCandidate.fullName}</h1>
+              <h1 className="text-xl font-semibold text-white">
+                Workspace CV: {submittedCandidate.fullName}
+              </h1>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => {
-                  setWorkspaceCandidate(null);
+                  setSubmittedCandidate(null);
                   setCvContent(null);
+                  setCurrentView("form");
+                  setFormData(initialFormData);
+                  setCvPhoto(null);
                   setStatus({ success: false, error: null });
                 }}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 hover:border-slate-500"
@@ -250,19 +255,19 @@ export default function CandidateForm() {
               <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                 <div>
                   <dt className="text-slate-500">Telefon</dt>
-                  <dd className="font-medium text-slate-100">{workspaceCandidate.phone}</dd>
+                  <dd className="font-medium text-slate-100">{submittedCandidate.phone}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">E-mail</dt>
-                  <dd className="font-medium text-slate-100">{workspaceCandidate.email}</dd>
+                  <dd className="font-medium text-slate-100">{submittedCandidate.email}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Lokalizacja</dt>
-                  <dd className="font-medium text-slate-100">{workspaceCandidate.currentLocation}</dd>
+                  <dd className="font-medium text-slate-100">{submittedCandidate.currentLocation}</dd>
                 </div>
                 <div>
                   <dt className="text-slate-500">Dostępność</dt>
-                  <dd className="font-medium text-slate-100">{workspaceCandidate.availability}</dd>
+                  <dd className="font-medium text-slate-100">{submittedCandidate.availability}</dd>
                 </div>
               </dl>
             </section>
@@ -290,7 +295,7 @@ export default function CandidateForm() {
           </div>
 
           <div className="print:block">
-            <CVPreview candidate={workspaceCandidate} content={cvContent} template={template} />
+            <CVPreview candidate={submittedCandidate} content={cvContent} template={template} />
           </div>
         </div>
       </main>
