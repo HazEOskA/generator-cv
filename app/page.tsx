@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
+import type { Candidate } from "./_lib/candidate";
 
 type CandidateFormData = {
   fullName: string;
@@ -32,9 +33,18 @@ const initialFormData: CandidateFormData = {
   cvConsent: false,
 };
 
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("read error"));
+    reader.readAsDataURL(file);
+  });
+
 export default function CandidateForm() {
   const [formData, setFormData] = useState<CandidateFormData>(initialFormData);
-  const [cvPhoto, setCvPhoto] = useState<File | null>(null);
+  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [photoName, setPhotoName] = useState<string | null>(null);
 
   const [status, setStatus] = useState<{ success: boolean; error: string | null }>({
     success: false,
@@ -49,24 +59,19 @@ export default function CandidateForm() {
     const target = e.target;
 
     if (target instanceof HTMLInputElement && target.type === "checkbox") {
-      setFormData({
-        ...formData,
-        [target.name]: target.checked,
-      });
+      setFormData({ ...formData, [target.name]: target.checked });
       return;
     }
 
-    setFormData({
-      ...formData,
-      [target.name]: target.value,
-    });
+    setFormData({ ...formData, [target.name]: target.value });
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
 
     if (!file) {
-      setCvPhoto(null);
+      setPhotoDataUrl(null);
+      setPhotoName(null);
       return;
     }
 
@@ -74,7 +79,8 @@ export default function CandidateForm() {
     const maxSizeBytes = maxSizeMb * 1024 * 1024;
 
     if (file.size > maxSizeBytes) {
-      setCvPhoto(null);
+      setPhotoDataUrl(null);
+      setPhotoName(null);
       setStatus({
         success: false,
         error: `Zdjęcie jest za duże. Maksymalny rozmiar pliku to ${maxSizeMb} MB.`,
@@ -84,7 +90,8 @@ export default function CandidateForm() {
     }
 
     if (!file.type.startsWith("image/")) {
-      setCvPhoto(null);
+      setPhotoDataUrl(null);
+      setPhotoName(null);
       setStatus({
         success: false,
         error: "Możesz dodać tylko plik graficzny, np. JPG, PNG lub WEBP.",
@@ -93,11 +100,19 @@ export default function CandidateForm() {
       return;
     }
 
-    setStatus({ success: false, error: null });
-    setCvPhoto(file);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setPhotoDataUrl(dataUrl);
+      setPhotoName(file.name);
+      setStatus({ success: false, error: null });
+    } catch {
+      setPhotoDataUrl(null);
+      setPhotoName(null);
+      setStatus({ success: false, error: "Nie udało się odczytać zdjęcia. Spróbuj ponownie." });
+    }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formData.cvConsent) {
@@ -112,42 +127,37 @@ export default function CandidateForm() {
     setStatus({ success: false, error: null });
 
     try {
-      const payload = new FormData();
+      const now = new Date();
+      const candidate: Candidate = {
+        id: now.getTime(),
+        fullName: formData.fullName,
+        phone: formData.phone,
+        email: formData.email || undefined,
+        birthDate: formData.birthDate,
+        currentLocation: formData.currentLocation || undefined,
+        availability: formData.availability || undefined,
+        education: formData.education,
+        experience: formData.experience,
+        printingExp: formData.printingExp,
+        languages: formData.languages || undefined,
+        drivingLicense: formData.drivingLicense || undefined,
+        photoDataUrl: photoDataUrl ?? null,
+        date: now.toISOString().slice(0, 10),
+      };
 
-      Object.entries(formData).forEach(([key, value]) => {
-        payload.append(key, String(value));
-      });
+      const existingRaw = localStorage.getItem("candidates");
+      const existing: Candidate[] = existingRaw ? JSON.parse(existingRaw) : [];
+      const next = [candidate, ...existing];
+      localStorage.setItem("candidates", JSON.stringify(next));
 
-      payload.append("submittedAt", new Date().toISOString());
-      payload.append("source", "Formularz Rekrutacyjny - Praca w Drukarni");
-
-      if (cvPhoto) {
-        payload.append("cvPhoto", cvPhoto);
-      }
-
-      const response = await fetch("https://formspree.io/f/xjgzdoag", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-        },
-        body: payload,
-      });
-
-      if (response.ok) {
-        setStatus({ success: true, error: null });
-        setFormData(initialFormData);
-        setCvPhoto(null);
-      } else {
-        const data = await response.json();
-        setStatus({
-          success: false,
-          error: data.error || "Wystąpił błąd podczas wysyłania formularza.",
-        });
-      }
+      setStatus({ success: true, error: null });
+      setFormData(initialFormData);
+      setPhotoDataUrl(null);
+      setPhotoName(null);
     } catch {
       setStatus({
         success: false,
-        error: "Błąd połączenia z serwerem. Spróbuj ponownie za chwilę.",
+        error: "Nie udało się zapisać danych lokalnie. Sprawdź dostępną pamięć przeglądarki.",
       });
     } finally {
       setLoading(false);
@@ -159,10 +169,16 @@ export default function CandidateForm() {
       <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
         <div className="w-full max-w-md bg-slate-800 p-8 rounded-2xl border border-slate-700 shadow-xl space-y-4">
           <div className="text-emerald-400 text-5xl">✓</div>
-          <h1 className="text-2xl font-bold">Dane zostały przesłane!</h1>
+          <h1 className="text-2xl font-bold">Dane zostały zapisane!</h1>
           <p className="text-slate-400">
-            Dziękujemy. Twoja aplikacja została zarejestrowana. Skontaktujemy się z Tobą telefonicznie.
+            Twoja aplikacja została zapisana lokalnie. Możesz teraz wygenerować CV w panelu rekrutera.
           </p>
+          <a
+            href="/dashboard"
+            className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition"
+          >
+            Przejdź do panelu
+          </a>
         </div>
       </div>
     );
@@ -386,11 +402,16 @@ export default function CandidateForm() {
             <p className="text-xs text-slate-500">
               Możesz dodać aktualne zdjęcie twarzy do CV. Zdjęcie nie jest wymagane. Maksymalny rozmiar: 5 MB.
             </p>
-            {cvPhoto && (
-              <p className="text-xs text-emerald-400">
-                Wybrane zdjęcie: {cvPhoto.name}
-              </p>
-            )}
+            {photoDataUrl && photoName ? (
+              <div className="flex items-center gap-3 pt-1">
+                <img
+                  src={photoDataUrl}
+                  alt="Podgląd zdjęcia"
+                  className="h-14 w-14 rounded-md object-cover border border-slate-700"
+                />
+                <span className="text-xs text-emerald-400 break-all">{photoName}</span>
+              </div>
+            ) : null}
           </div>
 
           <label className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
@@ -412,7 +433,7 @@ export default function CandidateForm() {
             disabled={loading}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white font-medium py-3 rounded-lg transition shadow-lg shadow-blue-600/20"
           >
-            {loading ? "Wysyłanie..." : "Wyślij moje dane"}
+            {loading ? "Zapisywanie..." : "Zapisz moje dane"}
           </button>
         </form>
       </section>
